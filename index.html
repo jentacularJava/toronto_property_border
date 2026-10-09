@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Toronto Property Boundary Mapper</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: { canvas: '#F4F4F0', panel: '#EFEFEF', ink: '#111827', accent: '#475569', divider: '#D1D5DB' },
+                    fontFamily: { serif: ['Lora', 'serif'], sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] }
+                }
+            }
+        }
+    </script>
+    <style>
+        #map { cursor: grab; } #map:active { cursor: grabbing; }
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background-color: #D1D5DB; }
+        .animate-query { animation: pulse 1.2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    </style>
+</head>
+<body class="bg-canvas text-ink font-sans antialiased selection:bg-accent selection:text-canvas overflow-x-hidden">
+
+    <div class="flex flex-col md:flex-row min-h-screen w-full">
+        
+        <!-- LEFT COLUMN: CONTROLS & METRICS -->
+        <main class="order-2 md:order-1 w-full md:w-[60%] border-r border-divider flex flex-col p-6 md:p-12 lg:px-16 h-auto md:h-screen overflow-y-auto custom-scroll">
+            
+            <header class="mb-8">
+                <h1 class="font-serif text-3xl md:text-4xl text-ink leading-tight mb-2">Toronto Boundary Engine</h1>
+                <h2 class="font-serif italic text-accent text-lg">Automated Cadastral parcel retrieval & dimension extraction.</h2>
+            </header>
+
+            <section class="mb-8">
+                <div class="font-mono text-xs text-accent tracking-widest uppercase mb-3 pb-2 border-b border-divider flex justify-between">
+                    <span>01 / Property Query</span>
+                    <span id="api-status" class="text-ink font-medium hidden animate-query">⚡ RESOLVING BOUNDARY...</span>
+                </div>
+                
+                <div class="relative w-full z-50 mb-3">
+                    <div class="flex items-center border border-divider bg-canvas shadow-sm focus-within:border-accent">
+                        <span class="pl-3 font-mono text-sm text-ink/50">⌕</span>
+                        <input type="text" id="address-input" class="w-full bg-transparent p-3 font-mono text-sm text-ink focus:outline-none" placeholder="Type a Toronto address (e.g. 100 Queen St W)..." autocomplete="off">
+                    </div>
+                    <ul id="auto-results" class="absolute left-0 right-0 top-full mt-1 bg-canvas border border-divider hidden max-h-56 overflow-y-auto custom-scroll shadow-lg"></ul>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2" id="preset-container">
+                    <span class="font-mono text-[10px] text-ink/50 uppercase tracking-widest mr-1">Try:</span>
+                    <button data-lat="43.653482" data-lng="-79.383935" class="preset-btn font-mono text-[10px] border border-divider bg-panel px-2 py-1 hover:bg-accent hover:text-canvas">[ 100 Queen St W ]</button>
+                    <button data-lat="43.678038" data-lng="-79.409444" class="preset-btn font-mono text-[10px] border border-divider bg-panel px-2 py-1 hover:bg-accent hover:text-canvas">[ 1 Austin Ter ]</button>
+                    <button data-lat="43.648560" data-lng="-79.504450" class="preset-btn font-mono text-[10px] border border-divider bg-panel px-2 py-1 hover:bg-accent hover:text-canvas">[ 2800 Bloor St W ]</button>
+                </div>
+            </section>
+
+            <section class="mb-8 flex-grow">
+                <div class="font-mono text-xs text-accent tracking-widest uppercase mb-4 pb-2 border-b border-divider">02 / Dimensions</div>
+                
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div class="bg-panel border border-divider p-4 shadow-sm">
+                        <span class="block font-mono text-[10px] text-accent tracking-widest uppercase mb-1">Total Lot Area</span>
+                        <div class="font-mono text-2xl text-ink"><span id="val-area-ft">0.0</span> <span class="text-xs text-ink/60">SQ FT</span></div>
+                        <div class="font-mono text-[10px] text-ink/50 mt-1"><span id="val-area-m">0.0</span> SQ M</div>
+                    </div>
+                    <div class="bg-panel border border-divider p-4 shadow-sm">
+                        <span class="block font-mono text-[10px] text-accent tracking-widest uppercase mb-1">Boundary Perimeter</span>
+                        <div class="font-mono text-2xl text-ink"><span id="val-perim-ft">0.0</span> <span class="text-xs text-ink/60">FT</span></div>
+                        <div class="font-mono text-[10px] text-ink/50 mt-1"><span id="val-perim-m">0.0</span> M</div>
+                    </div>
+                </div>
+
+                <div class="bg-panel border border-divider p-3 font-mono text-xs shadow-sm mb-4">
+                    <span class="block text-[10px] text-accent uppercase tracking-widest">Parcel ID / PIN</span>
+                    <span id="val-pid" class="text-ink">—</span>
+                </div>
+
+                <div class="bg-panel border border-divider p-4 shadow-sm">
+                    <span class="block font-mono text-[10px] text-accent tracking-widest uppercase mb-3">Boundary Segments (Meters)</span>
+                    <div id="val-dimensions" class="font-mono flex flex-wrap gap-2"><span class="opacity-50 italic text-xs">Awaiting selection...</span></div>
+                </div>
+            </section>
+
+            <section class="mt-auto">
+                <div class="font-mono text-xs text-accent tracking-widest uppercase mb-4 pb-2 border-b border-divider">03 / Actions</div>
+                <div class="flex gap-4">
+                    <button id="btn-export" class="font-mono text-xs tracking-widest uppercase text-ink border border-divider bg-canvas px-4 py-3 hover:bg-accent hover:text-canvas shadow-sm">[ 💾 Export ]</button>
+                    <button id="btn-purge" class="font-mono text-xs tracking-widest uppercase text-accent border border-divider bg-panel px-4 py-3 hover:bg-red-50 shadow-sm">[ 🗑️ Clear ]</button>
+                </div>
+            </section>
+
+        </main>
+
+        <!-- RIGHT COLUMN: VIEWPORT -->
+        <aside class="order-1 md:order-2 w-full md:w-[40%] h-[50vh] md:h-screen bg-panel md:sticky top-0 flex flex-col border-b md:border-b-0 border-divider p-4 md:p-6 z-0">
+            <div class="flex justify-between items-end mb-4 z-10">
+                <!-- <span class="font-mono text-[10px] tracking-widest uppercase text-ink/60">Viewport</span> -->
+                <!-- <div class="flex border border-divider bg-canvas text-[10px] font-mono uppercase tracking-widest p-1 shadow-sm">
+                    <button id="btn-light" class="px-4 py-1.5 bg-accent text-canvas">Light</button>
+                    <button id="btn-sat" class="px-4 py-1.5 text-ink hover:bg-panel">Hybrid</button>
+                </div> -->
+            </div>
+            <div id="map" class="flex-grow w-full border border-divider bg-canvas z-0 shadow-inner relative"></div>
+        </aside>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+    <script type="module">
+const $ = id => document.getElementById(id);
+const set = (id, v) => $(id).innerText = v;
+const hide = (id, on = true) => $(id).classList.toggle('hidden', on);
+const fmt = n => Number(n).toLocaleString('en-CA', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const label = p => [p.housenumber, p.street, 'Toronto'].filter(Boolean).join(' ');
+const FT = 3.28084, SQFT = 10.7639;
+const EMPTY = '<span class="opacity-50 italic text-xs">Awaiting selection...</span>';
+
+const map = L.map('map', { center: [43.653, -79.383], zoom: 13, zoomControl: false });
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { maxNativeZoom: 19, maxZoom: 21, attribution: 'Imagery &copy; Esri' }).addTo(map);
+const overlay = L.layerGroup().addTo(map);
+let current;
+
+async function fetchBoundary(lat, lng) {
+  const d = 0.00015, bbox = `${lng - d},${lat - d},${lng + d},${lat + d}`;
+  const url = `https://gis.toronto.ca/arcgis/rest/services/cot_geospatial27/MapServer/36/query?geometry=${bbox}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=true&outSR=4326&f=json`;
+  const { features = [] } = await (await fetch(url)).json();
+  const pool = features.map(f => turf.polygon(f.geometry.rings, f.attributes))
+    .filter(f => !['CORRIDOR', 'RESERVE'].includes(f.properties.FEATURE_TYPE));
+  const pt = turf.point([lng, lat]);
+  const hit = pool.find(f => turf.booleanPointInPolygon(pt, f)) ?? pool[0];
+  if (!hit) throw new Error('No parcel found here.');
+  return hit;
+}
+
+// Single render path: used for both display and clear (f = null)
+function render(f, lat, lng) {
+  current = f;
+  overlay.clearLayers();
+  const area = f ? turf.area(f) : 0;
+  const perim = f ? turf.length(turf.polygonToLine(f), { units: 'meters' }) : 0;
+  set('val-area-m', fmt(area));  set('val-area-ft', fmt(area * SQFT));
+  set('val-perim-m', fmt(perim)); set('val-perim-ft', fmt(perim * FT));
+  set('val-pid', f?.properties.PARCELID ?? '—');
+
+  let html = '';
+  if (f) {
+    const g = L.geoJSON(f, { style: { color: '#F4F4F0', weight: 2.5, fillColor: '#475569', fillOpacity: 0.35 } }).addTo(overlay);
+    L.circleMarker([lat, lng], { radius: 4, fillColor: '#F4F4F0', color: '#111827', weight: 2, fillOpacity: 1 }).addTo(overlay);
+    map.fitBounds(g.getBounds(), { padding: [60, 60], maxZoom: 20 });
+    const c = turf.simplify(f, { tolerance: 0.000005, highQuality: true }).geometry.coordinates[0];
+    html = c.slice(1).map((p, i) => [i + 1, turf.distance(c[i], p, { units: 'meters' })])
+      .filter(([, m]) => m > 0.1)
+      .map(([n, m]) => `<div class="bg-canvas border border-divider px-2.5 py-1.5 text-[11px] shadow-sm"><span class="text-accent mr-1 opacity-70">S${n}</span><b>${m.toFixed(1)}m</b> <span class="text-ink/60 text-[10px]">(${(m * FT).toFixed(1)}ft)</span></div>`)
+      .join('');
+  }
+  $('val-dimensions').innerHTML = html || EMPTY;
+}
+
+async function show(lat, lng, text) {
+  hide('auto-results'); hide('api-status', false);
+  $('address-input').value = text;
+  try { render(await fetchBoundary(+lat, +lng), +lat, +lng); }
+  catch (e) { alert(e.message); }
+  finally { hide('api-status'); }
+}
+
+let timer, ctl;
+$('address-input').oninput = e => {
+  clearTimeout(timer); ctl?.abort();
+  const q = e.target.value.trim();
+  if (q.length < 3) return hide('auto-results');
+  timer = setTimeout(async () => {
+    ctl = new AbortController();
+    try {
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q + ' Toronto')}&lat=43.65&lon=-79.38&limit=8`;
+      const { features = [] } = await (await fetch(url, { signal: ctl.signal })).json();
+      const items = [...new Map(features.map(f => [label(f.properties), f]))]; // dedupes by label
+      $('auto-results').replaceChildren(...items.map(([lbl, f]) => {
+        const li = document.createElement('li');
+        li.className = 'p-3 border-b border-divider hover:bg-panel cursor-pointer text-xs font-mono text-ink';
+        li.innerText = lbl;
+        li.onclick = () => show(f.geometry.coordinates[1], f.geometry.coordinates[0], lbl);
+        return li;
+      }));
+      hide('auto-results', !items.length);
+    } catch (err) { if (err.name !== 'AbortError') throw err; }
+  }, 300);
+};
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('.preset-btn');
+  if (b) show(b.dataset.lat, b.dataset.lng, b.innerText.replace(/[\[\]]/g, '').trim());
+  if (!e.target.closest('#address-input, #auto-results')) hide('auto-results');
+});
+
+$('btn-purge').onclick = () => { render(null); $('address-input').value = ''; };
+
+$('btn-export').onclick = () => {
+  if (!current) return alert('Map a boundary first.');
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([JSON.stringify(turf.featureCollection([current]))], { type: 'application/json' })),
+    download: `parcel_${current.properties.PARCELID || 'export'}.geojson`,
+  });
+  a.click();
+};
+</script>
+</body>
+</html>

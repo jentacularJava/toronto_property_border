@@ -1,0 +1,6 @@
+.vite/
+
+# Virtual environments
+.venv
+
+.env
